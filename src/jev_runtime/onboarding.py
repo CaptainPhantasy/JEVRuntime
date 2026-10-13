@@ -6,6 +6,7 @@ import httpx
 from .capabilities import SUPPORTED_ACTIONS, control_manifest
 from .config import endpoint, secret
 from .contracts import Policy, canonical, digest
+from .runtime import PolicyAcceptanceError
 
 SYSTEM = """You are the JEVRUNTIME onboarding interviewer. Ask one short question at a time
 about desired permissions, restrictions, workspace, and completion evidence.
@@ -465,10 +466,8 @@ class OnboardingSession:
                     if response["policy"] is not None
                     else None
                 )
-            except ValueError as exc:
-                if str(exc) == "Deterministic Constitution validation failed":
-                    raise OnboardingContractError("policy_acceptance") from exc
-                raise
+            except PolicyAcceptanceError as exc:
+                raise OnboardingContractError("policy_acceptance") from exc
             self.store.append(
                 "onboarding_output",
                 {

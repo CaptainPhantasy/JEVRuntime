@@ -542,3 +542,42 @@ def test_latest_transport_failure_does_not_revive_old_schema_feedback(tmp_path):
         assert len(store.records("human_intent")) == 1
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("host_problem", ["io", "simulation"])
+def test_host_validation_failure_is_not_compiler_correction(tmp_path, monkeypatch, host_problem):
+    from jev_runtime.onboarding import CORRECTION_LABEL, OnboardingContractError
+
+    store = Store(tmp_path / "history.sqlite")
+    try:
+        runtime = Runtime(store, FakeJudge())
+        model = RepairingCompiler()
+        model.mode = "valid"
+        original = runtime.checked_path
+
+        def broken(policy, target):
+            if host_problem == "io" and target == "README.md":
+                raise PermissionError("Synthetic host permission failure")
+            if host_problem == "simulation" and target == ".env":
+                return tmp_path / "unprotected"
+            return original(policy, target)
+
+        monkeypatch.setattr(runtime, "checked_path", broken)
+        session = OnboardingSession.start(store, runtime, model, tmp_path)
+        with pytest.raises(ValueError) as failure:
+            session.reply("Keep the requested acceptance check unchanged.")
+        assert not isinstance(failure.value, OnboardingContractError)
+        validation = store.records("policy_validation")[-1][1]
+        assert validation["passed"] is False
+        assert validation["host_validation_error"] is (host_problem == "io")
+        if host_problem == "io":
+            assert validation["acceptance_paths"][0]["failure_kind"] == "host_io"
+        assert "contract_diagnostic" not in store.records("onboarding_failure")[-1][1]
+        assert session.pending() and not session.outputs()
+        monkeypatch.setattr(runtime, "checked_path", original)
+        session.retry()
+        assert all(CORRECTION_LABEL not in m["content"] for m in model.calls[-1])
+        assert len(store.records("human_intent")) == 1
+        assert not store.records("human_approval")
+    finally:
+        store.close()

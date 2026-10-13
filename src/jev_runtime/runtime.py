@@ -7,6 +7,10 @@ from .capabilities import SUPPORTED_ACTIONS, control_manifest
 from .contracts import Decision, Judgment, Policy, canonical, digest
 
 
+class PolicyAcceptanceError(ValueError):
+    """Known unusable acceptance predicate, distinct from host validation failures."""
+
+
 class Runtime:
     """Trusted host API. Models and future workers must never get this object or its ledger."""
 
@@ -41,6 +45,7 @@ class Runtime:
             raise ValueError("Constitution workspace must be an existing directory")
         # Exercise the same deterministic path gate used by operations before activation.
         simulations = {}
+        host_validation_error = False
         for target in (
             "../outside",
             ".git/config",
@@ -51,8 +56,11 @@ class Runtime:
             try:
                 self.checked_path(policy, target)
                 simulations[target] = False
-            except (ValueError, OSError):
+            except ValueError:
                 simulations[target] = True
+            except OSError:
+                simulations[target] = True
+                host_validation_error = True
         # Acceptance files must be reachable through the same gate as staging and
         # evidence collection. Future artifacts are valid; impossible/protected
         # predicates must fail before spending a semantic judgment or activating.
@@ -62,7 +70,7 @@ class Runtime:
         for check in policy.checks:
             if check.kind != "file":
                 continue
-            usable = True
+            usable, failure_kind = True, None
             try:
                 validate_path(check.path, protected_paths=policy.protected_paths)
                 target = self.checked_path(policy, check.path)
@@ -72,15 +80,24 @@ class Runtime:
                     pass
                 else:
                     if not stat.S_ISREG(info.st_mode):
-                        usable = False
-            except (ValueError, OSError, WorkspaceError):
-                usable = False
+                        usable, failure_kind = False, "policy_rejection"
+            except (ValueError, WorkspaceError):
+                usable, failure_kind = False, "policy_rejection"
+            except OSError:
+                usable, failure_kind = False, "host_io"
+                host_validation_error = True
             acceptance_paths.append(
-                {"requirement": check.requirement, "path": check.path, "passed": usable}
+                {
+                    "requirement": check.requirement,
+                    "path": check.path,
+                    "passed": usable,
+                    "failure_kind": failure_kind,
+                }
             )
         unsupported = sorted(set(policy.actions) - SUPPORTED_ACTIONS)
         passed = (
             not unsupported
+            and not host_validation_error
             and policy.has_acceptance
             and all(simulations.values())
             and all(p["passed"] for p in acceptance_paths)
@@ -95,6 +112,7 @@ class Runtime:
                 "protected_path_simulations": simulations,
                 "acceptance_paths": acceptance_paths,
                 "acceptance_complete": policy.has_acceptance,
+                "host_validation_error": host_validation_error,
                 "passed": passed,
             },
         )
@@ -105,6 +123,8 @@ class Runtime:
                 "Every Constitution needs explicit acceptance requirements and typed checks"
             )
         if not passed:
+            if not host_validation_error and all(simulations.values()):
+                raise PolicyAcceptanceError("Deterministic Constitution validation failed")
             raise ValueError("Deterministic Constitution validation failed")
         judgment = self._judge("policy", {"human_intent": intent, "policy": policy.as_dict()})
         return self.store.append(

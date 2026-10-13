@@ -70,3 +70,22 @@ source/approval separation, malformed provider payloads, protected acceptance
 paths, stale failures and forged diagnostic rejection with offline doubles or
 mocked HTTP. No live generative or JEV call was made. Explicit live-model selection
 and the complete real interview-to-worker workflow remain pending.
+
+
+### Host failures do not rewrite acceptance checks
+
+Source review found that the generic deterministic-validation error could also
+represent a host permissions or enforcement problem. The mapping now distinguishes
+known unusable policy acceptance predicates from host I/O and failed protected-path
+simulations. Only the former produces compiler correction feedback. Host failures
+remain non-contract failures and block proposal creation/JEV review; the existing
+policy-validation evidence records the distinction. The compiler must not rewrite
+valid human requirements to work around a broken host.
+
+Controlled permission-error and enforcement-simulation cases verified that no
+schema feedback is sent, human input stays pending and unchanged, and explicit
+retry after host restoration creates no approval. The final full suite passed
+281 cases in 12.38 seconds, with no skips. Lint, formatting and diff checks passed;
+the canonical PRD is unchanged. An independent source-only critic found no remaining
+blocking classification or provenance defect in this increment. No live model calls
+were made, and the pending explicit generative-model selection is unchanged.
