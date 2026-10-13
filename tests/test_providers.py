@@ -338,3 +338,21 @@ def test_new_onboarding_cannot_omit_independent_checks(tmp_path):
             validate_result(
                 {"question": "Ready to run", "policy": candidate}, "human", str(tmp_path)
             )
+
+
+@pytest.mark.parametrize(
+    "body", [{}, {"choices": []}, {"choices": [{"message": {"content": "not JSON"}}]}]
+)
+def test_malformed_provider_payload_yields_fixed_contract_diagnostic(tmp_path, body):
+    from jev_runtime.onboarding import OnboardingContractError
+
+    model = OnboardingModel(
+        {"base_url": "http://localhost:1234/v1", "model": "fixture", "auth_required": False},
+        httpx.MockTransport(lambda _: httpx.Response(200, json=body)),
+        api_key="",
+    )
+    with pytest.raises(OnboardingContractError) as failure:
+        model.turn("Keep my request intact", "source", str(tmp_path))
+    assert failure.value.diagnostic["code"] == "response_json"
+    assert failure.value.diagnostic["authoritative"] is False
+    assert "not JSON" not in str(failure.value)

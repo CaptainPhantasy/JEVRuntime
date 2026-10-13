@@ -41,8 +41,32 @@ before correction. Focused provider/connection checks then passed 49 cases in 0.
 the full suite passed 263 cases in 12.32s, with no skips. Lint, formatting and diff
 checks passed, and the canonical PRD remained unchanged. These checks used doubles
 or mocked HTTP for generation. Live generative-model selection is still pending.
-Bounded field-specific correction feedback for a rejected compiler response remains
-subsequent core work; it is not claimed implemented here.
+The subsequent explicit compiler-feedback increment is recorded below.
 
 This bound covers new accepted responses. It does not cap HTTP bytes before download,
 repair older saved outputs, or remove the existing overall conversation-size limit.
+
+
+## Explicit compiler correction on retry — 2026-10-13
+
+Compiler failures now produce fixed, bounded host diagnostics for malformed JSON,
+response shape/size, policy schema/checks, changed source provenance, unsupported
+actions and the known deterministic unusable-acceptance failure. The terminal shows
+the safe diagnostic. It does not show rejected provider content.
+
+Only an explicit retry supplies a validated diagnostic from the latest failure for
+the exact interview and pending input. Changed human input, operator context, an
+accepted reply or a newer non-contract failure cannot reuse stale correction text.
+Unknown or modified stored diagnostics are not replayed. The runtime reconstructs
+correction messages from fixed constants; they do not grant authority or become
+immutable human-source context. The attempt records the referenced failure and a
+hash of its effective model input. There is no automatic generation retry, output
+coercion or activation. Missing-workspace, storage and JEV semantic failures are
+not classified as compiler-schema corrections.
+
+The full suite returned 279 passed in 12.38 seconds, with no skips. Lint, formatting
+and diff checks passed; the PRD is unchanged. These new cases exercise repair,
+source/approval separation, malformed provider payloads, protected acceptance
+paths, stale failures and forged diagnostic rejection with offline doubles or
+mocked HTTP. No live generative or JEV call was made. Explicit live-model selection
+and the complete real interview-to-worker workflow remain pending.
