@@ -285,6 +285,9 @@ def test_generative_onboarding_contract(monkeypatch, tmp_path):
         controls = metadata["runtime_controls"]
         assert controls["grants_authority"] is False
         assert "deploy" not in controls["supported_host_actions"]
+        advertised = body["messages"][0]["content"].split("actions (list drawn from ", 1)[1]
+        advertised = advertised.split(")", 1)[0].split(", ")
+        assert set(advertised) == {"read", "write", "delete", "execute", "git", "push"}
         assert "per_descendant_command_allowlist" in controls["unsupported_controls"]
         assert request.url.path == "/v1/chat/completions"
         return httpx.Response(

@@ -372,3 +372,35 @@ def test_unused_malformed_judgment_reference_does_not_block_local_connection(tmp
     config = load(write_config(tmp_path / "providers.toml", connections))
     settings = generative_settings(config, "onboarding")
     assert cli.model_credential(config, settings, "Onboarding", "onboarding") == ""
+
+
+def test_oversized_compiler_reply_remains_pending_and_can_be_corrected(tmp_path):
+    class Compiler(FakeOnboarding):
+        oversized = True
+
+        def turn(self, conversation, intent_id, workspace):
+            result = super().turn(conversation, intent_id, workspace)
+            if self.oversized:
+                result["policy"]["checks"][0]["contains"] = "x" * 100001
+            return result
+
+    store = Store(tmp_path / "history.sqlite")
+    try:
+        runtime = Runtime(store, FakeJudge())
+        model = Compiler()
+        session = OnboardingSession.start(store, runtime, model, tmp_path)
+        words = "Preserve this exact request while the compiler corrects its response."
+        with pytest.raises(ValueError, match="16000-byte contract limit"):
+            session.reply(words)
+        assert session.pending()
+        assert not session.outputs()
+        assert not store.records("policy_proposal")
+        assert not store.records("human_approval")
+        assert store.records("human_intent")[0][1]["text"] == words
+        model.oversized = False
+        assert session.retry()["proposal_id"] is not None
+        assert not session.pending()
+        assert len(store.records("human_intent")) == 1
+        assert not store.records("human_approval")
+    finally:
+        store.close()

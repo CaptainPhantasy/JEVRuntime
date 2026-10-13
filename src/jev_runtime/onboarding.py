@@ -3,15 +3,16 @@ from pathlib import Path
 
 import httpx
 
-from .capabilities import control_manifest
+from .capabilities import SUPPORTED_ACTIONS, control_manifest
 from .config import endpoint, secret
 from .contracts import Policy, canonical, digest
 
 SYSTEM = """You are the JEVRUNTIME onboarding interviewer. Ask one short question at a time
 about desired permissions, restrictions, workspace, and completion evidence.
 Respond with JSON containing exactly question (string) and policy (null or object).
+Keep the complete response within 16000 UTF-8 bytes.
 Only propose a policy when requirements are clear. Policy fields: intent_id (string),
-workspace (absolute path), actions (list drawn from read, write, delete, execute, git, push, deploy),
+workspace (absolute path), actions (list drawn from {supported_actions}),
 required_evidence (nonempty list of artifact acceptance requirements).
 Also include name, protected_paths (relative paths/globs), shell_commands (lists of argv
 prefixes permitted for worker launch and independent verification), checks (one per required_evidence),
@@ -53,7 +54,12 @@ command receipts and Git gateways on Linux with bubblewrap. Deployment and gener
 network operations are not implemented: do not propose deploy. Say explicitly when a
 requested restriction is not representable; do not silently replace it with semantic review.
 Use an empty actions list if no capabilities have been authorized. Never infer write authority
-from a request for advice. Completion requirements must describe observable artifacts."""
+from a request for advice. Completion requirements must describe observable artifacts.""".replace(
+    "{supported_actions}", ", ".join(sorted(SUPPORTED_ACTIONS))
+)
+
+
+MAX_RESPONSE_BYTES = 16000
 
 
 class OnboardingServiceError(RuntimeError):
@@ -91,6 +97,8 @@ def validate_result(result, intent_id, workspace):
         or len(result["question"]) > 8000
     ):
         raise ValueError("Invalid onboarding response")
+    if len(canonical(result).encode("utf-8")) > MAX_RESPONSE_BYTES:
+        raise ValueError("Onboarding response exceeds the 16000-byte contract limit")
     if result["policy"] is not None:
         policy = Policy.parse(result["policy"])
         if policy.intent_id != intent_id or policy.workspace != workspace:
