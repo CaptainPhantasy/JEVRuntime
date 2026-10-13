@@ -1,0 +1,20 @@
+# Explicit local generative connection for onboarding. No paid API or key is used.
+[onboarding]
+provider = "openai-compatible"
+base_url = "http://127.0.0.1:11434/v1"
+model = "qwen2.5-coder:14b"
+api_key_env = "JEV_ONBOARDING_LOCAL_UNUSED"
+auth_required = false
+
+# The user-supplied OpenRouter credential remains native-JEV-only.
+[judgment]
+provider = "openrouter"
+base_url = "https://openrouter.ai"
+model = "typesafe/jev-1.13"
+api_key_env = "OPENROUTER_API_KEY"
+timeout_seconds = 15
+
+[agent]
+provider = "unconfigured"
+command = []
+tool_roots = []
