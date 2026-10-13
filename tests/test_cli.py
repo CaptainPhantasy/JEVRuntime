@@ -158,3 +158,29 @@ def test_capabilities_probe_is_not_overall_readiness(monkeypatch, capsys):
     assert report["host_probe"]["available"] is False
     assert "filesystem" in report["implemented_controls"]
     assert "no harness or model was tested" in report["host_probe"]["scope"]
+
+
+def test_interview_displays_safe_contract_failure_and_preserves_request(
+    tmp_path, monkeypatch, capsys
+):
+    from jev_runtime.onboarding import FakeOnboarding
+
+    original = FakeOnboarding.turn
+
+    def invalid(self, human_text, intent_id, workspace):
+        result = original(self, human_text, intent_id, workspace)
+        result["policy"].pop("checks")
+        return result
+
+    monkeypatch.setattr(FakeOnboarding, "turn", invalid)
+    answers = iter(["Preserve this exact request", "/done"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    assert main(["--state", str(tmp_path / "history.sqlite"), "--demo", "onboard"]) == 0
+    assert "deterministic check" in capsys.readouterr().out
+    store = Store(tmp_path / "history.sqlite.demo", readonly=True)
+    try:
+        assert store.records("human_intent")[0][1]["text"] == "Preserve this exact request"
+        assert not store.records("onboarding_output")
+        assert not store.records("human_approval")
+    finally:
+        store.close()

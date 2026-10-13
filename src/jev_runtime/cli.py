@@ -21,6 +21,7 @@ from .destinations import (
 from .judgment import FakeJudge, TypeSafeJudge, judgment_client
 from .onboarding import (
     FakeOnboarding,
+    OnboardingContractError,
     OnboardingModel,
     OnboardingServiceError,
     OnboardingSession,
@@ -399,7 +400,9 @@ def interview(store, runtime, model, args, config=None):
             else:
                 result = session.retry() if text.strip() == "/retry" else session.reply(text)
         except Exception as exc:
-            if isinstance(exc, (OnboardingServiceError, ConnectionRequired)):
+            if isinstance(
+                exc, (OnboardingServiceError, OnboardingContractError, ConnectionRequired)
+            ):
                 display(str(exc))
             else:
                 print("The reply could not be completed (" + type(exc).__name__ + ").")
