@@ -1,0 +1,15 @@
+# Select generative endpoints and models explicitly with jev setup.
+[onboarding]
+provider = "unconfigured"
+
+[judgment]
+provider = "openrouter"
+base_url = "https://openrouter.ai"
+model = "typesafe/jev-1.13"
+api_key_env = "OPENROUTER_API_KEY"
+timeout_seconds = 15
+
+[agent]
+command = ["crush", "run", "{task}"]
+provider = "unconfigured"
+tool_roots = []
