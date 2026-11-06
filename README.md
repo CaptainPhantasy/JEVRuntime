@@ -2,8 +2,8 @@
 
 A terminal application for describing a job in ordinary language, approving its
 Constitution, and running a terminal agent under an independent supervisor.
-The canonical requirements are preserved in [docs/PRD.md](docs/PRD.md).
-Implementation boundaries are tracked in [docs/README.md](docs/README.md).
+
+![Offline demo: the worker's result is reviewed, verified and applied](docs/screenshots/demo-applied-80x24.png)
 
 ## Start
 
@@ -12,14 +12,61 @@ The operating system must permit unprivileged user namespaces. There is no uncon
 fallback when isolation is unavailable. Onboarding and inspecting records do not
 require the execution backend.
 
+Install the wheel from a release into its own virtualenv:
+
 ```sh
-python -m venv .venv
-. .venv/bin/activate
-pip install -e '.[dev]'
-jev doctor
+python3 -m venv .venv
+.venv/bin/python -m pip install ./jevruntime-0.2.0-py3-none-any.whl
+.venv/bin/jev --version          # jev 0.2.0
+.venv/bin/jev doctor             # Worker isolation: available (bubblewrap)
+```
+
+From a checkout, `pip install -e '.[dev]'` installs the same `jev` command plus the
+test tools. `jev --help` lists every command; `jev COMMAND --help` explains its options.
+
+### Try it offline in two minutes
+
+`--demo` uses a simulated interviewer and a simulated JEV judge with separate records,
+but the worker really runs in the sandbox and really changes the demo project.
+
+```sh
+mkdir -p "$HOME/JevDemo/project"
+jev --demo --output "$HOME/JevDemo" onboard --workspace "$HOME/JevDemo/project"
+```
+
+Type any request, then `/approve` and `yes`. Run the suggested worker with
+`/run --no-provider -- sh -c 'echo hello world > hello.txt'` and answer `yes` to apply
+the reviewed change. `jev --demo --output "$HOME/JevDemo" status` shows the recorded
+run, verification, publication and completion. `scripts/demo_smoke.py` drives exactly
+this flow end to end and is what CI runs.
+
+![Demo proposal in a 60x20 terminal](docs/screenshots/demo-proposal-60x20.png)
+
+![jev status in plain language; add --json for raw records](docs/screenshots/status-120x36.png)
+
+### Use a local model (Ollama)
+
+```sh
+ollama pull qwen2.5:7b-instruct
 mkdir -p "$HOME/JevWork"
+jev --output "$HOME/JevWork" setup
+#   Connect a generative onboarding model now? yes
+#   Onboarding API base URL: http://127.0.0.1:11434/v1
+#   Onboarding model: qwen2.5:7b-instruct   (qwen2.5-coder:14b also works)
+#   Does this endpoint require an API key? no
 jev --output "$HOME/JevWork"
 ```
+
+Describe the job, what the worker may do, and how you will know it is done. Small local
+models sometimes wrap their answer in Markdown or rename fields; JEV repairs the format
+and, if needed, asks the model once more before showing you anything. If it still
+cannot read a valid proposal, it says so and suggests `/retry` or a larger model.
+
+![qwen2.5:7b-instruct proposes a scope from one plain-language request](docs/screenshots/ollama-proposal-120x36.png)
+
+Activation also needs the JEV judgment service. Set the key named during setup
+(default `OPENROUTER_API_KEY`) before `/approve`. Without it the proposal is shown but
+stays inactive, and review explains which key is missing.
 
 Inspect the implemented controls before configuration with `jev capabilities`.
 This command reads no credentials, creates no ledger and calls no model. Add `--probe`
@@ -62,12 +109,8 @@ The onboarding model is a separately selected generative connection. A credentia
 for JEV must not be assumed to authorize that connection. This project does not include
 a ChatGPT subscription-to-API bridge; no additional model is selected by a JEV judgment.
 
-Live OpenRouter calls have succeeded. The read-only sample scored below the current
-0.95 floor and could not activate. That sample also explicitly forbade execution,
-so it was not a valid positive fixture for launching a worker, which needs read and
-execute authority. It does not establish a threshold defect. The floor is unchanged;
-a complete live onboarding and governed worker flow still needs to be demonstrated.
-See [the actual live results](docs/VERIFICATION.md#live-openrouter-jev).
+Live provider results and their limits are recorded in
+[docs/VERIFICATION.md](docs/VERIFICATION.md#live-openrouter-jev).
 
 Describe the job, permitted actions, protected files, and how to establish success.
 The interviewer compiles a proposal with concrete file or command checks. A request
@@ -326,7 +369,7 @@ are plaintext. HTTPS is the default. No credentials are copied into worker proce
 - The local ledger rejects application updates/deletes and verifies a hash chain; it
   does not provide an external signed checkpoint against host-owner replacement.
 - Deployment gateways, arbitrary network access, distributed/multi-agent supervision,
-  signed Constitutions and the other PRD later-phase features remain unimplemented.
+  signed Constitutions and other later-phase features remain unimplemented.
 
 `--demo` explicitly selects simulated onboarding/JEV providers and a separate ledger.
 It does not turn real worker execution into a simulation. Use a disposable project for

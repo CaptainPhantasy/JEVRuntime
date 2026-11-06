@@ -1,4 +1,6 @@
 import json
+import re
+import shlex
 from pathlib import Path
 
 import httpx
@@ -57,12 +59,216 @@ command receipts and Git gateways on Linux with bubblewrap. Deployment and gener
 network operations are not implemented: do not propose deploy. Say explicitly when a
 requested restriction is not representable; do not silently replace it with semantic review.
 Use an empty actions list if no capabilities have been authorized. Never infer write authority
-from a request for advice. Completion requirements must describe observable artifacts.""".replace(
+from a request for advice. Completion requirements must describe observable artifacts.
+Response shape (JSON only, no Markdown fences, no other keys):
+{"question": "plain-language text for the human", "policy": null}
+or, when requirements are clear:
+{"question": "...ready for your review...", "policy": {"intent_id": "<supplied>",
+"workspace": "<supplied>", "actions": ["read", "write", "execute"],
+"required_evidence": ["hello.txt contains hello world"], "shell_commands": [["sh"]],
+"checks": [{"requirement": "hello.txt contains hello world", "kind": "file",
+"path": "hello.txt", "contains": "hello world"}]}}""".replace(
     "{supported_actions}", ", ".join(sorted(SUPPORTED_ACTIONS))
 )
 
 
 MAX_RESPONSE_BYTES = 16000
+# Extra model calls allowed inside one turn to repair a malformed response.
+REPAIR_ATTEMPTS = 2
+FRIENDLY_PARSE_FAILURE = (
+    "Could not parse a valid workspace policy from the model response. "
+    "Run /retry or switch to a larger model."
+)
+REPAIR_PROMPT = (
+    "Runtime-owned format repair (not human intent): your previous reply could not be used. "
+    "Reply again with ONLY one JSON object with exactly two keys: question (a nonempty "
+    "plain-language string) and policy (null, or an object using only the policy fields "
+    "described in the system message). Keep every human requirement and restriction. "
+    "Problem: "
+)
+_POLICY_KEYS = (
+    "intent_id",
+    "workspace",
+    "actions",
+    "required_evidence",
+    "name",
+    "protected_paths",
+    "shell_commands",
+    "checks",
+    "judgment_threshold",
+    "max_seconds",
+    "max_failures",
+    "behavior_interval",
+)
+_QUESTION_ALIASES = ("question", "message", "response", "reply", "text", "content", "answer")
+_LIMITS = {"max_seconds": (1, 86400), "max_failures": (1, 10), "behavior_interval": (5, 600)}
+
+
+def extract_json_object(content):
+    """Return the first balanced JSON object in model text (code fences and prose ignored)."""
+    if not isinstance(content, str):
+        raise ValueError("No text content")
+    text = re.sub(r"```[a-zA-Z0-9_-]*", "", content)
+    decoder = json.JSONDecoder()
+    for start in [i for i, ch in enumerate(text) if ch == "{"]:
+        try:
+            value, _ = decoder.raw_decode(text, start)
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            return value
+    raise ValueError("No JSON object")
+
+
+def _string_list(value):
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return value
+    out = []
+    for item in value:
+        item = item.strip() if isinstance(item, str) else item
+        if item and item not in out:
+            out.append(item)
+    return out
+
+
+def _argv(value):
+    if isinstance(value, str):
+        try:
+            return shlex.split(value)
+        except ValueError:
+            return value
+    return value
+
+
+def _normalize_check(check, evidence):
+    if isinstance(check, str):
+        check = {"requirement": check}
+    if not isinstance(check, dict):
+        return check
+    check = {str(k).lower(): v for k, v in check.items()}
+    for alias in ("command", "cmd"):
+        if alias in check and "argv" not in check:
+            check["argv"] = check.pop(alias)
+    if "file" in check and "path" not in check:
+        check["path"] = check.pop("file")
+    if "description" in check and "requirement" not in check:
+        check["requirement"] = check.pop("description")
+    if "argv" in check:
+        check["argv"] = _argv(check["argv"])
+    if "kind" not in check or check["kind"] not in {"file", "command"}:
+        check["kind"] = "command" if check.get("argv") else "file"
+    if check["kind"] == "file":
+        check.pop("argv", None)
+        check.pop("expected_exit", None)
+    else:
+        if not check.get("path"):
+            check.pop("path", None)
+        exit_code = check.get("expected_exit", 0)
+        if isinstance(exit_code, str) and exit_code.strip().isdigit():
+            check["expected_exit"] = int(exit_code)
+    if check.get("contains") in (None, ""):
+        check.pop("contains", None)
+    if "requirement" not in check and len(evidence) == 1:
+        check["requirement"] = evidence[0]
+    return {
+        k: v
+        for k, v in check.items()
+        if k in {"requirement", "kind", "path", "argv", "expected_exit", "contains"}
+    }
+
+
+def normalize_response(raw, intent_id, workspace):
+    """Coerce common small-model variants into the response contract.
+
+    Normalization never adds capabilities: it renames keys, fixes container
+    types, fills runtime-owned provenance, and drops invalid optional limits
+    (their host defaults apply). Everything is still validated afterwards.
+    """
+    if not isinstance(raw, dict):
+        return raw
+    data = {str(k).lower(): v for k, v in raw.items()}
+    policy = data.get("policy", data.get("proposal", data.get("constitution")))
+    if policy is None and "actions" in data and "required_evidence" in data:
+        policy = {k: v for k, v in data.items() if k in _POLICY_KEYS}
+    if isinstance(policy, str):
+        try:
+            policy = extract_json_object(policy)
+        except ValueError:
+            policy = None
+    if isinstance(policy, dict) and not policy:
+        policy = None
+    question = next(
+        (data[k] for k in _QUESTION_ALIASES if isinstance(data.get(k), str) and data[k].strip()),
+        None,
+    )
+    if question is None:
+        question = (
+            "The proposal is ready for your review."
+            if isinstance(policy, dict)
+            else data.get("question")
+        )
+    if isinstance(policy, dict):
+        policy = {str(k).lower(): v for k, v in policy.items()}
+        policy = {k: v for k, v in policy.items() if k in _POLICY_KEYS}
+        # Fill missing runtime-owned provenance; a conflicting value stays and is rejected.
+        if not policy.get("intent_id"):
+            policy["intent_id"] = intent_id
+        if not policy.get("workspace"):
+            policy["workspace"] = workspace
+        actions = _string_list(policy.get("actions", []))
+        if isinstance(actions, list):
+            actions = [a.lower() if isinstance(a, str) else a for a in actions]
+            actions = list(dict.fromkeys(actions))
+        policy["actions"] = actions
+        evidence = _string_list(policy.get("required_evidence", []))
+        checks = policy.get("checks")
+        if isinstance(checks, dict):
+            checks = [checks]
+        if isinstance(checks, list):
+            checks = [
+                _normalize_check(c, evidence if isinstance(evidence, list) else []) for c in checks
+            ]
+            requirements = [c.get("requirement") for c in checks if isinstance(c, dict)]
+            if (
+                (not evidence)
+                and requirements
+                and all(isinstance(r, str) and r for r in requirements)
+            ):
+                evidence = list(dict.fromkeys(requirements))
+            policy["checks"] = checks
+        policy["required_evidence"] = evidence
+        commands = policy.get("shell_commands")
+        if isinstance(commands, (str, list)):
+            commands = [commands] if isinstance(commands, str) else commands
+            commands = [_argv(c) for c in commands]
+            policy["shell_commands"] = [c for c in commands if c]
+        if "protected_paths" in policy:
+            policy["protected_paths"] = _string_list(policy["protected_paths"])
+        threshold = policy.get("judgment_threshold")
+        if threshold is not None:
+            try:
+                threshold = float(threshold)
+            except (TypeError, ValueError):
+                threshold = None
+            if threshold is None or not 0.95 <= threshold <= 1:
+                policy.pop("judgment_threshold")
+            else:
+                policy["judgment_threshold"] = threshold
+        for name, (low, high) in _LIMITS.items():
+            if name not in policy:
+                continue
+            value = policy[name]
+            if isinstance(value, str) and value.strip().isdigit():
+                value = int(value)
+            if type(value) is int and low <= value <= high:
+                policy[name] = value
+            else:
+                policy.pop(name)
+        if not isinstance(policy.get("name", "x"), str) or not str(policy.get("name", "x")).strip():
+            policy.pop("name", None)
+    return {"question": question, "policy": policy}
 
 
 # Only fixed host diagnostics can become compiler correction context.
@@ -206,29 +412,44 @@ class OnboardingModel:
             }
         )
         api_key = self.api_key if self.api_key is not None else secret(self.settings)
-        with httpx.Client(timeout=30, transport=self.transport, follow_redirects=False) as client:
-            response = client.post(
-                endpoint(self.settings["base_url"]) + "/chat/completions",
-                headers={"Authorization": "Bearer " + api_key} if api_key else {},
-                json={
-                    "model": self.settings["model"],
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": SYSTEM + "\nRuntime-owned metadata: " + metadata,
-                        },
-                        *conversation,
-                    ],
-                    "response_format": {"type": "json_object"},
-                },
-            )
-            if not response.is_success:
-                raise OnboardingServiceError(response.status_code)
-            try:
-                result = json.loads(response.json()["choices"][0]["message"]["content"])
-            except (ValueError, KeyError, IndexError, TypeError) as exc:
-                raise OnboardingContractError("response_json") from exc
-        return validate_result(result, intent_id, workspace)
+        messages = [
+            {"role": "system", "content": SYSTEM + "\nRuntime-owned metadata: " + metadata},
+            *conversation,
+        ]
+        timeout = self.settings.get("timeout_seconds", 120)
+        with httpx.Client(
+            timeout=timeout, transport=self.transport, follow_redirects=False
+        ) as client:
+            for attempt in range(REPAIR_ATTEMPTS + 1):
+                response = client.post(
+                    endpoint(self.settings["base_url"]) + "/chat/completions",
+                    headers={"Authorization": "Bearer " + api_key} if api_key else {},
+                    json={
+                        "model": self.settings["model"],
+                        "messages": messages,
+                        "response_format": {"type": "json_object"},
+                    },
+                )
+                if not response.is_success:
+                    raise OnboardingServiceError(response.status_code)
+                content = None
+                try:
+                    content = response.json()["choices"][0]["message"]["content"]
+                    result = normalize_response(extract_json_object(content), intent_id, workspace)
+                    return validate_result(result, intent_id, workspace)
+                except OnboardingContractError as exc:
+                    error = exc
+                except (ValueError, KeyError, IndexError, TypeError) as exc:
+                    error = OnboardingContractError("response_json")
+                    error.__cause__ = exc
+                if attempt == REPAIR_ATTEMPTS or not isinstance(content, str):
+                    raise error
+                messages = [
+                    *messages,
+                    {"role": "assistant", "content": content[:MAX_RESPONSE_BYTES]},
+                    {"role": "user", "content": REPAIR_PROMPT + error.diagnostic["message"]},
+                ]
+        raise OnboardingContractError("response_json")
 
 
 class FakeOnboarding:
@@ -242,6 +463,44 @@ class FakeOnboarding:
                 "required_evidence": ["README.md exists"],
                 "checks": [
                     {"requirement": "README.md exists", "kind": "file", "path": "README.md"}
+                ],
+            },
+        }
+
+
+class DemoOnboarding:
+    """Deterministic offline interviewer for --demo.
+
+    It does not interpret the human text. It always proposes the same small,
+    runnable scope so the whole review -> approve -> run -> verify -> apply ->
+    complete path can be exercised without any model or network.
+    """
+
+    REQUIREMENT = "hello.txt contains hello world"
+    COMMAND = "/run --no-provider -- sh -c 'echo hello world > hello.txt'"
+
+    def turn(self, conversation, intent_id, workspace):
+        return {
+            "question": (
+                "DEMONSTRATION (simulated interviewer): your request is recorded. This demo "
+                "always proposes one scope: the worker may read, write and launch sh in a "
+                "private copy, and completion requires hello.txt to contain hello world. "
+                "Use /approve, then " + self.COMMAND
+            ),
+            "policy": {
+                "intent_id": intent_id,
+                "workspace": workspace,
+                "name": "Demo Constitution",
+                "actions": ["read", "write", "execute"],
+                "required_evidence": [self.REQUIREMENT],
+                "shell_commands": [["sh"]],
+                "checks": [
+                    {
+                        "requirement": self.REQUIREMENT,
+                        "kind": "file",
+                        "path": "hello.txt",
+                        "contains": "hello world",
+                    }
                 ],
             },
         }

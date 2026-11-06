@@ -3,8 +3,7 @@
 Reviewed 2026-09-22 against upstream source, tests, and MIT license files.
 The collection is maintained in this repository's `docs/` directory;
 temporary source clones used during inspection are not a second product repository.
-The original PRD summary and next steps discussion
-identified the initial sources. The human PRD remains unchanged in `PRD.md`.
+The initial product requirements identified these sources.
 No upstream implementation code was copied or vendored. The official SDK is a
 dependency; its installed distribution retains its own license. Future copying
 must retain the applicable copyright and full MIT permission notice.

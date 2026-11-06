@@ -16,8 +16,10 @@ def test_offline_cli_onboarding_does_not_activate(tmp_path, monkeypatch, capsys)
     assert not (tmp_path / "ledger.sqlite").exists()
     assert (tmp_path / "ledger.sqlite.demo").exists()
     capsys.readouterr()
-    assert main(["--state", state, "--demo", "inspect", "--kind", "human_approval"]) == 0
+    assert main(["--state", state, "--demo", "inspect", "--kind", "human_approval", "--json"]) == 0
     assert json.loads(capsys.readouterr().out) == []
+    assert main(["--state", state, "--demo", "inspect", "--kind", "human_approval"]) == 0
+    assert "No human_approval records yet." in capsys.readouterr().out
 
 
 def test_provider_failure_retains_human_text(tmp_path, monkeypatch):
@@ -163,20 +165,23 @@ def test_capabilities_probe_is_not_overall_readiness(monkeypatch, capsys):
 def test_interview_displays_safe_contract_failure_and_preserves_request(
     tmp_path, monkeypatch, capsys
 ):
-    from jev_runtime.onboarding import FakeOnboarding
+    from jev_runtime.onboarding import FRIENDLY_PARSE_FAILURE, DemoOnboarding
 
-    original = FakeOnboarding.turn
+    original = DemoOnboarding.turn
 
     def invalid(self, human_text, intent_id, workspace):
         result = original(self, human_text, intent_id, workspace)
         result["policy"].pop("checks")
         return result
 
-    monkeypatch.setattr(FakeOnboarding, "turn", invalid)
+    monkeypatch.setattr(DemoOnboarding, "turn", invalid)
     answers = iter(["Preserve this exact request", "/done"])
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     assert main(["--state", str(tmp_path / "history.sqlite"), "--demo", "onboard"]) == 0
-    assert "deterministic check" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert FRIENDLY_PARSE_FAILURE in out
+    # Model-facing contract instructions are never shown to the human.
+    assert "deterministic check" not in out
     store = Store(tmp_path / "history.sqlite.demo", readonly=True)
     try:
         assert store.records("human_intent")[0][1]["text"] == "Preserve this exact request"

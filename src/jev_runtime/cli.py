@@ -20,7 +20,8 @@ from .destinations import (
 )
 from .judgment import FakeJudge, TypeSafeJudge, judgment_client
 from .onboarding import (
-    FakeOnboarding,
+    FRIENDLY_PARSE_FAILURE,
+    DemoOnboarding,
     OnboardingContractError,
     OnboardingModel,
     OnboardingServiceError,
@@ -32,6 +33,73 @@ from .store import Store
 from .supervisor import Supervisor
 
 _CREDENTIALS = {}
+
+
+def _summary(payload):
+    if not isinstance(payload, dict):
+        return str(payload)
+    keys = (
+        "run_id",
+        "proposal_id",
+        "constitution_id",
+        "session_id",
+        "workspace",
+        "name",
+        "reason",
+        "passed",
+        "state",
+        "semantic_pass",
+        "directory",
+    )
+    parts = [
+        k + "=" + str(payload[k]) for k in keys if k in payload and payload[k] not in (None, "")
+    ]
+    if isinstance(payload.get("policy"), dict):
+        policy = payload["policy"]
+        parts.append("workspace=" + str(policy.get("workspace")))
+        parts.append("actions=" + (",".join(policy.get("actions", [])) or "none"))
+    return "  ".join(parts) or ", ".join(sorted(payload)) or "(empty)"
+
+
+def print_doctor(result):
+    if result.get("available"):
+        print("Worker isolation: available (" + str(result.get("backend") or "unknown") + ")")
+    else:
+        print("Worker isolation: unavailable")
+        display("Reason: " + (result.get("reason") or "not reported"))
+        print("Workers cannot launch until isolation is available. Install bubblewrap (bwrap).")
+    for key, value in result.items():
+        if key not in {"available", "backend", "reason"}:
+            display("  " + key + ": " + str(value))
+
+
+def print_status(events):
+    if not events:
+        print("No worker sessions recorded yet. Start one with /run in jev, or jev run -- COMMAND.")
+        return
+    print(str(len(events)) + " recorded worker events (oldest first):")
+    for event in events:
+        display(
+            "  "
+            + str(event.get("seq", "")).rjust(4)
+            + "  "
+            + event["kind"].ljust(24)
+            + " "
+            + event["id"][:8]
+            + "  "
+            + _summary(event.get("payload"))
+        )
+    print("Full records: jev status --json")
+
+
+def print_records(kind, records):
+    if not records:
+        print("No " + kind + " records yet.")
+        return
+    print(str(len(records)) + " " + kind + " records:")
+    for identifier, payload in records:
+        display("  " + identifier + "  " + _summary(payload))
+    print("Full records: jev inspect --kind " + kind + " --json")
 
 
 def display(text):
@@ -99,6 +167,15 @@ class ConnectedOnboarding:
         return model.turn(conversation, intent_id, workspace)
 
 
+JEV_ERROR_HINTS = {
+    "ValueError": "The JEV judgment could not run, usually because no JEV API key was "
+    "provided. Set the key named in jev setup (default OPENROUTER_API_KEY), then use /retry.",
+    "ConnectionRequired": "JEV is not connected. Run jev setup to choose its connection, "
+    "then use /retry.",
+    "TimeoutError": "The JEV service did not answer in time. Use /retry.",
+}
+
+
 def review(runtime, proposal_id):
     proposal = runtime.store.get(proposal_id, "policy_proposal")
     policy = proposal["policy"]
@@ -155,6 +232,9 @@ def review(runtime, proposal_id):
         display("JEV model: " + result["model"])
         if result.get("error"):
             display("JEV unavailable: " + result["error"] + "; authority remains inactive.")
+            hint = JEV_ERROR_HINTS.get(result["error"])
+            if hint:
+                print(hint)
         else:
             if result.get("dimensions"):
                 print("JEV dimension probabilities (every dimension must meet the floor):")
@@ -233,8 +313,14 @@ def worker_arguments(parser):
     parser.add_argument(
         "--no-provider", action="store_true", help="No model connection for this worker"
     )
-    parser.add_argument("--interactive", action="store_true")
-    parser.add_argument("commandline", nargs=argparse.REMAINDER)
+    parser.add_argument(
+        "--interactive", action="store_true", help="Attach your terminal to the worker"
+    )
+    parser.add_argument(
+        "commandline",
+        nargs=argparse.REMAINDER,
+        help="Worker command after -- (default: the agent command from jev setup)",
+    )
 
 
 class InterviewRunParser(argparse.ArgumentParser):
@@ -400,9 +486,11 @@ def interview(store, runtime, model, args, config=None):
             else:
                 result = session.retry() if text.strip() == "/retry" else session.reply(text)
         except Exception as exc:
-            if isinstance(
-                exc, (OnboardingServiceError, OnboardingContractError, ConnectionRequired)
-            ):
+            if isinstance(exc, OnboardingContractError):
+                # The diagnostic is model-facing; the human gets a plain next step.
+                print(FRIENDLY_PARSE_FAILURE)
+                continue
+            if isinstance(exc, (OnboardingServiceError, ConnectionRequired)):
                 display(str(exc))
             else:
                 print("The reply could not be completed (" + type(exc).__name__ + ").")
@@ -417,85 +505,114 @@ def interview(store, runtime, model, args, config=None):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="JEVRUNTIME supervised terminal agents")
+    from . import __version__
+
+    parser = argparse.ArgumentParser(
+        prog="jev",
+        description="JEVRUNTIME supervised terminal agents. Run jev with no command to start "
+        "the onboarding interview; try jev --demo for an offline walkthrough.",
+    )
+    parser.add_argument("-V", "--version", action="version", version="jev " + __version__)
     parser.add_argument(
         "--output", help="Existing folder in your user space for this job and its records"
     )
     parser.add_argument("--config", help="Explicit provider settings file (advanced)")
     parser.add_argument("--state", help="Explicit history file (advanced)")
     parser.add_argument("--run-dir", help="Private worker storage outside the project")
-    parser.add_argument("--demo", action="store_true", help="Explicit offline demonstration")
-    parser.set_defaults(workspace=None, session=None, new=False)
-    sub = parser.add_subparsers(dest="command")
-    sub.add_parser("setup")
-    onboard = sub.add_parser("onboard")
-    onboard.add_argument("--workspace")
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Offline demonstration: simulated interviewer and JEV judge, separate records",
+    )
+    parser.set_defaults(workspace=None, session=None, new=False, json=False)
+    sub = parser.add_subparsers(dest="command", metavar="COMMAND")
+    sub.add_parser("setup", help="Choose model connections and the worker command (no API calls)")
+    onboard = sub.add_parser(
+        "onboard", help="Describe the job in plain language and review the proposed scope"
+    )
+    onboard.add_argument("--workspace", help="Existing project directory the worker will change")
     onboard.add_argument("--session", help="Resume a particular interview")
     onboard.add_argument("--new", action="store_true", help="Start a separate interview")
-    inspect = sub.add_parser("inspect")
-    inspect.add_argument("--kind", default="policy_proposal")
-    approve = sub.add_parser("approve")
-    approve.add_argument("proposal")
-    decide = sub.add_parser("decide")
-    decide.add_argument("proposal")
-    decide.add_argument("action")
-    decide.add_argument("target")
-    evidence = sub.add_parser("collect-file")
-    evidence.add_argument("proposal")
-    evidence.add_argument("requirement")
-    evidence.add_argument("target")
-    complete = sub.add_parser("complete")
-    complete.add_argument("proposal")
+    inspect = sub.add_parser("inspect", help="List recorded proposals or other ledger records")
+    inspect.add_argument(
+        "--kind", default="policy_proposal", help="Record kind to list (default: policy_proposal)"
+    )
+    inspect.add_argument("--json", action="store_true", help="Print raw records as JSON")
+    approve = sub.add_parser("approve", help="Review and approve a proposal by ID")
+    approve.add_argument("proposal", help="Proposal ID shown by /review or jev inspect")
+    decide = sub.add_parser("decide", help="Ask whether an action on a target is allowed")
+    decide.add_argument("proposal", help="Proposal ID")
+    decide.add_argument("action", help="read, write, delete, execute, git or push")
+    decide.add_argument("target", help="Project-relative path the action touches")
+    evidence = sub.add_parser("collect-file", help="Record a file as completion evidence")
+    evidence.add_argument("proposal", help="Proposal ID")
+    evidence.add_argument("requirement", help="Exact completion requirement text")
+    evidence.add_argument("target", help="Project-relative file that satisfies it")
+    complete = sub.add_parser("complete", help="Check whether every completion requirement passed")
+    complete.add_argument("proposal", help="Proposal ID")
     complete.add_argument(
         "--details", action="store_true", help="Explain missing or stale completion evidence"
     )
-    sub.add_parser("doctor", help="Check real worker isolation support")
+    doctor = sub.add_parser("doctor", help="Check real worker isolation support")
+    doctor.add_argument("--json", action="store_true", help="Print the raw check as JSON")
     capabilities = sub.add_parser(
         "capabilities", help="Describe actual control boundaries without model calls"
     )
     capabilities.add_argument(
         "--probe", action="store_true", help="Also run the local namespace check"
     )
-    sub.add_parser("status", help="Show recorded worker sessions and results")
+    status = sub.add_parser("status", help="Show recorded worker sessions and results")
+    status.add_argument("--json", action="store_true", help="Print raw events as JSON")
     stop = sub.add_parser("stop", help="Stop a running worker without applying its changes")
-    stop.add_argument("run_id")
+    stop.add_argument("run_id", help="Worker session ID")
     revoke = sub.add_parser("revoke", help="Immediately suspend this Constitution's authority")
-    revoke.add_argument("proposal")
+    revoke.add_argument("proposal", help="Proposal ID")
     run = sub.add_parser("run", help="Launch a terminal worker under the active Constitution")
-    run.add_argument("--proposal")
-    run.add_argument("--workspace")
-    run.add_argument("--session")
+    run.add_argument("--proposal", help="Approved proposal ID (default: latest for the project)")
+    run.add_argument("--workspace", help="Project directory (default: current directory)")
+    run.add_argument("--session", help="Interview session ID whose proposal to use")
     worker_arguments(run)
-    for command in ("verify", "apply"):
-        item = sub.add_parser(command)
-        item.add_argument("run_id")
+    for command, text in (
+        ("verify", "Run the acceptance checks against a finished worker's result"),
+        ("apply", "Verify and apply a reviewed worker result to the project"),
+    ):
+        item = sub.add_parser(command, help=text)
+        item.add_argument("run_id", help="Worker session ID")
     reconcile = sub.add_parser("reconcile", help="Inspect an active or interrupted publication")
-    reconcile.add_argument("run_id")
+    reconcile.add_argument("run_id", help="Worker session ID")
     reconcile.add_argument(
         "--abandon",
         action="store_true",
         help="Human-reviewed closure without file changes or completion",
     )
-    recover = sub.add_parser("recover")
-    recover.add_argument("proposal")
-    constitution = sub.add_parser("constitution")
-    constitution.add_argument(
-        "operation", choices=["list", "export", "import", "rollback", "compose"]
+    recover = sub.add_parser("recover", help="Restore authority after a failure, with approval")
+    recover.add_argument("proposal", help="Proposal ID")
+    constitution = sub.add_parser(
+        "constitution", help="List, export, import, roll back or compose Constitutions"
     )
-    constitution.add_argument("values", nargs="*")
-    constitution.add_argument("--name", default="Composed Constitution")
+    constitution.add_argument(
+        "operation",
+        choices=["list", "export", "import", "rollback", "compose"],
+        help="What to do",
+    )
+    constitution.add_argument("values", nargs="*", help="Proposal IDs or file paths")
+    constitution.add_argument(
+        "--name", default="Composed Constitution", help="Name for a composed Constitution"
+    )
     git = sub.add_parser("git", help="Human-approved host Git operations")
-    git.add_argument("operation", choices=["status", "commit", "push", "reconcile"])
-    git.add_argument("--proposal")
+    git.add_argument(
+        "operation", choices=["status", "commit", "push", "reconcile"], help="Git operation"
+    )
+    git.add_argument("--proposal", help="Approved proposal ID")
     git.add_argument("--attempt", help="Exact Git attempt ID from git reconcile")
     git.add_argument(
         "--abandon",
         action="store_true",
         help="Close reviewed uncertainty without changing files or restoring authority",
     )
-    git.add_argument("--message", default="")
-    git.add_argument("--remote", default="")
-    git.add_argument("--branch", default="")
+    git.add_argument("--message", default="", help="Commit message")
+    git.add_argument("--remote", default="", help="Remote name or URL for push")
+    git.add_argument("--branch", default="", help="Branch to push")
     git.add_argument(
         "--allow-http",
         action="store_true",
@@ -514,7 +631,10 @@ def main(argv=None):
             from .sandbox import Sandbox
 
             result = Sandbox().check()
-            print(json.dumps(result, indent=2))
+            if args.json:
+                print(json.dumps(result, indent=2))
+            else:
+                print_doctor(result)
             return 0 if result["available"] else 1
         resolve_destinations(args)
         if args.command == "setup":
@@ -573,38 +693,41 @@ def main(argv=None):
                 print(json.dumps(result, indent=2))
                 return 0
             if args.command == "inspect":
-                print(json.dumps(store.records(args.kind), indent=2))
+                records = store.records(args.kind)
+                if args.json:
+                    print(json.dumps(records, indent=2))
+                else:
+                    print_records(args.kind, records)
                 return 0
             if args.command == "status":
-                print(
-                    json.dumps(
-                        store.events(
-                            (
-                                "runtime_session",
-                                "runtime_result",
-                                "verification_started",
-                                "verification_failed",
-                                "run_verification",
-                                "publication_started",
-                                "publication_failed",
-                                "publication_abandoned",
-                                "publication",
-                                "completion",
-                                "recovery_started",
-                                "recovery_approval",
-                                "recovery_receipt",
-                                "recovery_verification",
-                                "recovery_failed",
-                                "autonomy",
-                                "git_attempt_started",
-                                "git_failure",
-                                "git_receipt",
-                                "git_abandoned",
-                            )
-                        ),
-                        indent=2,
+                events = store.events(
+                    (
+                        "runtime_session",
+                        "runtime_result",
+                        "verification_started",
+                        "verification_failed",
+                        "run_verification",
+                        "publication_started",
+                        "publication_failed",
+                        "publication_abandoned",
+                        "publication",
+                        "completion",
+                        "recovery_started",
+                        "recovery_approval",
+                        "recovery_receipt",
+                        "recovery_verification",
+                        "recovery_failed",
+                        "autonomy",
+                        "git_attempt_started",
+                        "git_failure",
+                        "git_receipt",
+                        "git_abandoned",
                     )
                 )
+                if args.json:
+                    print(json.dumps(events, indent=2))
+                else:
+                    print_status(events)
                 return 0
             if args.command == "stop":
                 store.get(args.run_id, "runtime_session")
@@ -632,7 +755,7 @@ def main(argv=None):
                 print(
                     "DEMONSTRATION: simulated model replies and judgments; separate demo records."
                 )
-                judge, model = FakeJudge(), FakeOnboarding()
+                judge, model = FakeJudge(), DemoOnboarding()
             else:
                 if (
                     not Path(args.config).exists()

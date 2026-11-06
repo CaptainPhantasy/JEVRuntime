@@ -6,8 +6,28 @@ build-backend = "setuptools.build_meta"
 name = "jevruntime"
 version = "0.2.0"
 description = "Human-defined Constitutions and isolated supervised terminal agents"
+readme = "README.md"
 requires-python = ">=3.11"
+authors = [{ name = "Floyd's Labs" }]
+keywords = ["agents", "sandbox", "bubblewrap", "terminal", "supervisor"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+]
 dependencies = ["typesafe-sdk==0.7.1", "httpx>=0.28,<1"]
+
+[project.urls]
+Homepage = "https://floydslabs.com"
+Repository = "https://github.com/CaptainPhantasy/JEVRuntime"
+Issues = "https://github.com/CaptainPhantasy/JEVRuntime/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "ruff>=0.12,<1", "build>=1,<2"]

@@ -9,3 +9,5 @@ build/
 .jev/
 .env
 *.sqlite*
+config/*.local.toml
+config/*.local.toml
