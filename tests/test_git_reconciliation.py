@@ -1,10 +1,12 @@
 """Durable Git evidence and real child-process loss, without live model/remote calls."""
 
 import json
+import shutil
 import subprocess
 import sys
 import textwrap
 import time
+from pathlib import Path
 
 import pytest
 from test_git_policy import git, repository, runtime_for, stage  # noqa: F401
@@ -18,6 +20,21 @@ from jev_runtime.git_operations import (
     unresolved_git,
 )
 from jev_runtime.supervisor import Supervisor
+
+
+def installed_jev():
+    """Locate the installed ``jev`` console script for the running interpreter.
+
+    Prefer the script next to ``sys.executable`` (the active venv/install), then PATH.
+    Never hardcode a machine-specific prefix such as /usr/local/bin.
+    """
+    candidate = Path(sys.executable).with_name("jev")
+    if candidate.is_file():
+        return str(candidate)
+    found = shutil.which("jev")
+    if found is None:
+        pytest.fail("installed `jev` console script not found; run `pip install -e .` first")
+    return found
 
 
 @pytest.fixture
@@ -253,7 +270,7 @@ def test_readonly_installed_cli_inspects_revoked_policy_without_provider(setup):
     before, mtime = store.path.read_bytes(), store.path.stat().st_mtime_ns
     result = subprocess.run(
         [
-            "/usr/local/bin/jev",
+            installed_jev(),
             "--state",
             str(store.path),
             "git",
@@ -461,7 +478,7 @@ def test_readonly_cli_lists_legacy_attempt_id_without_active_policy(setup):
     runtime.suspend(runtime.constitution_id(proposal), "Fixture revocation")
     before = store.path.read_bytes()
     result = subprocess.run(
-        ["/usr/local/bin/jev", "--state", str(store.path), "git", "reconcile"],
+        [installed_jev(), "--state", str(store.path), "git", "reconcile"],
         capture_output=True,
         text=True,
         timeout=5,
