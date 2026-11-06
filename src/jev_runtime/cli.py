@@ -839,8 +839,8 @@ def main(argv=None):
                     j = judgment_settings(get_config())
                     route = broker_route(j)
                     if route is not None:
-                        upstream, token = route
-                        client = judgment_client(j, token, upstream=upstream)
+                        decisions_url, token = route
+                        client = judgment_client(j, token, decisions_url=decisions_url)
                     else:
                         client = judgment_client(
                             j,

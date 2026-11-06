@@ -91,9 +91,10 @@ BROKER_TOKEN_ENV = "JEV_BROKER_TOKEN"
 def broker_route(settings, environ=None):
     """Optional credential-broker route for the OpenRouter JEV connection.
 
-    JEV_BROKER_URL names a proxy that injects the provider credential itself, for
-    example https://broker.example/proxy/openrouter. JEV_BROKER_TOKEN is the
-    short-lived token that proxy expects. Neither is saved; both come from the
+    JEV_BROKER_URL is the broker URL that forwards to OpenRouter's Decisions endpoint
+    (https://openrouter.ai/api/alpha/decisions) and injects the provider credential,
+    for example https://broker.example/proxy/jev-decisions. It is used as-is.
+    JEV_BROKER_TOKEN is the short-lived token that proxy expects. Neither is saved; both come from the
     environment of this run. Returns None when no broker is configured.
     """
     environ = os.environ if environ is None else environ

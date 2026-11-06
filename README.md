@@ -110,10 +110,11 @@ for JEV must not be assumed to authorize that connection. This project does not 
 a ChatGPT subscription-to-API bridge; no additional model is selected by a JEV judgment.
 
 If your team keeps provider keys in a credential broker instead, set `JEV_BROKER_URL`
-to the broker's OpenRouter proxy base (HTTPS, or loopback HTTP) and `JEV_BROKER_TOKEN`
-to the short-lived token it issued. JEV then sends the same fixed Decisions request to
-`$JEV_BROKER_URL/api/alpha/decisions` with that token, and the broker adds the provider
-key. Neither value is saved. Without `JEV_BROKER_URL`, `OPENROUTER_API_KEY` is used.
+to the broker URL that forwards to `https://openrouter.ai/api/alpha/decisions` (HTTPS,
+or loopback HTTP) and `JEV_BROKER_TOKEN` to the short-lived token it issued. JEV posts
+the same fixed Decisions request to `$JEV_BROKER_URL` exactly as given, with that token
+as the bearer, and the broker adds the provider key. Neither value is saved. Without
+`JEV_BROKER_URL`, `OPENROUTER_API_KEY` is used.
 
 Live provider results and their limits are recorded in
 [docs/VERIFICATION.md](docs/VERIFICATION.md#live-openrouter-jev).

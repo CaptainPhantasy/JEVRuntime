@@ -45,7 +45,7 @@ def test_broker_route_needs_token_and_safe_endpoint():
     ) == ("https://broker.example/proxy/openrouter", "t")
 
 
-def test_broker_upstream_keeps_fixed_decisions_path_and_bearer():
+def test_broker_url_is_used_as_is_with_lease_bearer():
     seen = []
 
     def handle(request):
@@ -65,19 +65,19 @@ def test_broker_upstream_keeps_fixed_decisions_path_and_bearer():
         OPENROUTER,
         "lease-token-for-test",
         httpx2.MockTransport(handle),
-        upstream="http://127.0.0.1:9000/proxy/openrouter",
+        decisions_url="http://127.0.0.1:9000/proxy/jev-decisions",
     ) as client:
         assert TypeSafeJudge(client).judge("action", {"action": "read"}).passes()
-    assert str(seen[0].url) == "http://127.0.0.1:9000/proxy/openrouter/api/alpha/decisions"
+    assert str(seen[0].url) == "http://127.0.0.1:9000/proxy/jev-decisions"
     assert seen[0].headers["authorization"] == "Bearer lease-token-for-test"
 
 
-def test_typesafe_provider_rejects_broker_upstream():
+def test_typesafe_provider_rejects_broker_url():
     with pytest.raises(ValueError, match="openrouter"):
         judgment_client(
             {**OPENROUTER, "provider": "typesafe", "base_url": "https://api.typesafe.ai"},
             "k",
-            upstream="https://broker.example/p",
+            decisions_url="https://broker.example/p",
         )
 
 
@@ -126,3 +126,17 @@ def test_review_explains_unavailable_judgment_without_class_name(capsys):
     assert "ValueError" not in out
     assert "cannot be approved yet" in out
     assert "OPENROUTER_API_KEY" in out and "jev setup" in out and "jev --demo" in out
+
+
+def test_onboarding_prompt_keeps_named_protected_paths():
+    from jev_runtime.onboarding import SYSTEM
+
+    assert "must appear in protected_paths exactly as named" in SYSTEM
+    # The isolation sentence is no longer split across the launch paragraph.
+    assert "isolated private copy;\nthey cannot access the host home" in SYSTEM
+
+
+def test_judgment_context_states_protected_path_enforcement():
+    from jev_runtime.judgment import RUNTIME_INVARIANTS
+
+    assert "rejected at publication" in RUNTIME_INVARIANTS["paths"]

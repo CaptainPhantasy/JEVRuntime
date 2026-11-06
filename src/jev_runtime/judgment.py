@@ -87,13 +87,14 @@ RUBRICS = {
 
 RUNTIME_INVARIANTS = {
     "authority": "Only explicitly listed actions can be allowed. Human approval is separate and mandatory; this judgment never grants it.",
-    "paths": "The host rejects workspace escapes, symlinks, hard links and special files. Built-in credential and runtime-state path exclusions apply in addition to policy.protected_paths.",
+    "paths": "The host rejects workspace escapes, symlinks, hard links and special files. Built-in credential and runtime-state path exclusions apply in addition to policy.protected_paths. Protected paths are left out of the worker's copy and any change to them is rejected at publication, whichever command or descendant process made it, so protecting a path needs no per-command interception.",
     "execution": "Workers operate on an isolated project copy without host home, credentials, ledger or external network. Only the fixed model broker is reachable. shell_commands governs launches and explicit checks, not each descendant command.",
     "publication": "Source modifications require separate review of actual changes. Protected paths remain denied regardless of semantic judgment.",
 }
 
 
 OPENROUTER_URL = "https://openrouter.ai"
+OPENROUTER_DECISIONS_URL = OPENROUTER_URL + "/api/alpha/decisions"
 
 
 class OpenRouterDecisionTransport(httpx2.BaseTransport):
@@ -104,9 +105,10 @@ class OpenRouterDecisionTransport(httpx2.BaseTransport):
     follow redirects, or fall back to a generative model.
     """
 
-    def __init__(self, transport=None, upstream=OPENROUTER_URL):
+    def __init__(self, transport=None, decisions_url=OPENROUTER_DECISIONS_URL):
         self.transport = transport or httpx2.HTTPTransport(retries=0, trust_env=False)
-        self.decisions_url = upstream.rstrip("/") + "/api/alpha/decisions"
+        # A credential broker may stand in for the endpoint; its URL is used as-is.
+        self.decisions_url = decisions_url
 
     def handle_request(self, request):
         if request.method != "POST" or str(request.url) != OPENROUTER_URL + "/v1/systemone":
@@ -124,21 +126,23 @@ class OpenRouterDecisionTransport(httpx2.BaseTransport):
         self.transport.close()
 
 
-def judgment_client(settings, api_key, transport=None, upstream=None):
+def judgment_client(settings, api_key, transport=None, decisions_url=None):
     """Create the same official SDK client for either supported JEV provider.
 
-    ``upstream`` optionally replaces https://openrouter.ai with a credential
-    broker proxy; the request shape and endpoint path stay fixed.
+    ``decisions_url`` optionally replaces the OpenRouter Decisions endpoint with a
+    credential-broker URL that forwards to it; the request body stays identical.
     """
     provider = settings.get("provider", "typesafe")
     if provider == "openrouter":
         if settings["base_url"].rstrip("/") != OPENROUTER_URL:
             raise ValueError("OpenRouter JEV base_url must be https://openrouter.ai")
-        transport = OpenRouterDecisionTransport(transport, upstream or OPENROUTER_URL)
+        transport = OpenRouterDecisionTransport(
+            transport, decisions_url or OPENROUTER_DECISIONS_URL
+        )
     elif provider != "typesafe":
         raise ValueError("Unsupported judgment provider")
-    elif upstream:
-        raise ValueError("A broker upstream is supported only for the openrouter JEV provider")
+    elif decisions_url:
+        raise ValueError("A broker URL is supported only for the openrouter JEV provider")
     return TypeSafeClient(
         api_key=api_key,
         model=settings["model"],
