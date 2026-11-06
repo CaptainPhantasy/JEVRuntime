@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img"><title>JEVRuntime</title>
+<path fill="#24313c" stroke="#aab6bf" stroke-width="10" stroke-linejoin="round" d="M88 72H384L436 124V392L384 440H88L56 408V104Z"/>
+<path fill="#15212b" d="M104 104H368L404 140V388L368 416H112V128Z"/>
+<circle cx="256" cy="220" r="72" fill="none" stroke="#d6ad68" stroke-width="12"/>
+<path fill="none" stroke="#f2f0e9" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" d="M222 220L246 244L298 184"/>
+<path fill="none" stroke="#f2f0e9" stroke-width="16" stroke-linecap="square" d="M140 340L172 372L140 404"/>
+<path fill="#d6ad68" d="M208 388H360V408H208Z"/>
+</svg>
