@@ -105,6 +105,10 @@ TypeSafe SDK still builds Noul questions and validates answers; a fixed transpor
 routes them to `/api/alpha/decisions`. Direct TypeSafe service remains selectable,
 and existing configurations without a judgment `provider` keep their direct route.
 Review displays the resolved JEV model, each dimension's probability, threshold and API failure.
+Every dimension must reach the host floor of 0.65; a proposal may raise its own floor but
+never lower it. The floor is calibrated against live `typesafe/jev-1.13` results, where valid
+requests scored 0.72 to 0.96 and over-scoped or restriction-dropping proposals scored 0.10
+to 0.28; see [docs/VERIFICATION.md](docs/VERIFICATION.md).
 The onboarding model is a separately selected generative connection. A credential supplied
 for JEV must not be assumed to authorize that connection. This project does not include
 a ChatGPT subscription-to-API bridge; no additional model is selected by a JEV judgment.
@@ -384,3 +388,9 @@ demo worker runs. Live provider failure never falls back to simulated approval.
 
 Research and attribution: [docs/RESEARCH.md](docs/RESEARCH.md).
 Actual verification and its limits: [docs/VERIFICATION.md](docs/VERIFICATION.md).
+
+## License
+
+JEVRuntime is free software under the GNU Affero General Public License, version 3
+or any later version (`AGPL-3.0-or-later`). See [LICENSE](LICENSE). If you run a
+modified version for other people over a network, you must offer them its source code.

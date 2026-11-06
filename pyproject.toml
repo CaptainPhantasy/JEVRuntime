@@ -9,6 +9,8 @@ description = "Human-defined Constitutions and isolated supervised terminal agen
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Floyd's Labs" }]
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 keywords = ["agents", "sandbox", "bubblewrap", "terminal", "supervisor"]
 classifiers = [
     "Development Status :: 4 - Beta",

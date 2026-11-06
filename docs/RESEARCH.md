@@ -83,7 +83,7 @@ Changing their base URL to OpenRouter is insufficient. They are optional advisor
 interfaces, not runtime isolation or approval controls. Numerical example thresholds
 are not imported. A snippet that runs an action solely because `Noul >= 0.90` would
 violate this PRD unless the host has separately established permission and any required
-human approval. The runtime's 0.95 floor is unchanged.
+human approval. The runtime's host floor is 0.65, calibrated in VERIFICATION.md.
 
 The earlier live read-only sample forbade execution and was not a positive fixture
 for worker launch. Its rejection does not demonstrate a threshold defect. Results

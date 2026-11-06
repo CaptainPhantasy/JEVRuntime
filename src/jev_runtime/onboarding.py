@@ -7,7 +7,7 @@ import httpx
 
 from .capabilities import SUPPORTED_ACTIONS, control_manifest
 from .config import endpoint, secret
-from .contracts import Policy, canonical, digest
+from .contracts import HOST_FLOOR, Policy, canonical, digest
 from .runtime import PolicyAcceptanceError
 
 SYSTEM = """You are the JEVRUNTIME onboarding interviewer. Ask one short question at a time
@@ -19,8 +19,9 @@ workspace (absolute path), actions (list drawn from {supported_actions}),
 required_evidence (nonempty list of artifact acceptance requirements).
 Also include name, protected_paths (relative paths/globs), shell_commands (lists of argv
 prefixes permitted for worker launch and independent verification), checks (one per required_evidence),
-judgment_threshold (0.95 through 1), max_seconds (1..86400), max_failures (1..10),
-behavior_interval (5..600 seconds). Each check has requirement and kind: file checks
+judgment_threshold (0.65 through 1), max_seconds (1..86400), max_failures (1..10),
+behavior_interval (5..600 seconds). Omit judgment_threshold, max_seconds, max_failures and
+behavior_interval unless the human states a value; the host defaults then apply. Each check has requirement and kind: file checks
 have path and optional contains; command checks have argv and expected_exit (normally 0).
 Command checks require execute permission. Test execution must use a command check,
 never a text file saying that tests passed. Use only concrete commands clarified with the
@@ -254,7 +255,7 @@ def normalize_response(raw, intent_id, workspace):
                 threshold = float(threshold)
             except (TypeError, ValueError):
                 threshold = None
-            if threshold is None or not 0.95 <= threshold <= 1:
+            if threshold is None or not HOST_FLOOR <= threshold <= 1:
                 policy.pop("judgment_threshold")
             else:
                 policy["judgment_threshold"] = threshold

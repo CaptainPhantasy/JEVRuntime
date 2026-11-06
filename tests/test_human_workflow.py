@@ -98,7 +98,7 @@ def test_policy_variants_normalize_without_adding_capabilities(tmp_path):
     assert policy.actions == ("read", "write")
     assert policy.required_evidence == ("notes.txt exists",)
     assert policy.checks[0].path == "notes.txt"
-    assert policy.judgment_threshold == 0.95
+    assert policy.judgment_threshold == 0.65
     assert policy.max_seconds == 600
     assert "execute" not in policy.actions
 

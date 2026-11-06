@@ -4,6 +4,11 @@ import math
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+# Lowest per-dimension JEV probability that can authorize anything. Calibrated against
+# live typesafe/jev-1.13: valid requests scored 0.72-0.96 per dimension, while
+# over-scoped or restriction-dropping proposals scored 0.10-0.28 (docs/VERIFICATION.md).
+HOST_FLOOR = 0.65
+
 
 def canonical(value):
     return json.dumps(
@@ -33,7 +38,7 @@ class Judgment:
     request_hash: str | None = None
     provider_metadata: dict[str, int | str] = field(default_factory=dict)
 
-    def passes(self, threshold=0.95):
+    def passes(self, threshold=HOST_FLOOR):
         # Fixed bootstrap floor; model output cannot lower this threshold.
         p = self.probability
         return (
@@ -134,7 +139,7 @@ class Policy:
     protected_paths: tuple[str, ...] = ()
     shell_commands: tuple[tuple[str, ...], ...] = ()
     checks: tuple[EvidenceCheck, ...] = ()
-    judgment_threshold: float = 0.95
+    judgment_threshold: float = HOST_FLOOR
     max_seconds: int = 900
     max_failures: int = 3
     behavior_interval: int = 30
@@ -205,9 +210,11 @@ class Policy:
             "actions"
         ]:
             raise ValueError("Command rules or checks require explicit execute permission")
-        threshold = raw.get("judgment_threshold", 0.95)
-        if type(threshold) not in (int, float) or not 0.95 <= threshold <= 1:
-            raise ValueError("Judgment threshold cannot weaken the 0.95 host floor")
+        threshold = raw.get("judgment_threshold", HOST_FLOOR)
+        if type(threshold) not in (int, float) or not HOST_FLOOR <= threshold <= 1:
+            raise ValueError(
+                "Judgment threshold cannot weaken the " + str(HOST_FLOOR) + " host floor"
+            )
         limits = {
             "max_seconds": (1, 86400, 900),
             "max_failures": (1, 10, 3),

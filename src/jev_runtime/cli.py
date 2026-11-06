@@ -17,7 +17,7 @@ from .config import (
     load,
     setup,
 )
-from .contracts import Decision, digest
+from .contracts import HOST_FLOOR, Decision, digest
 from .destinations import (
     DestinationError,
     command_prefix,
@@ -267,7 +267,7 @@ def review(runtime, proposal_id):
             say("    Required exit status: " + str(check["expected_exit"]))
         if check.get("contains"):
             display("    Must contain exactly this text: " + repr(check["contains"]))
-    say("Judgment floor: " + str(policy.get("judgment_threshold", 0.95)))
+    say("Judgment floor: " + str(policy.get("judgment_threshold", HOST_FLOOR)))
     say(
         "Time limit: "
         + str(policy.get("max_seconds", 900))
