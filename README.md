@@ -389,8 +389,27 @@ demo worker runs. Live provider failure never falls back to simulated approval.
 Research and attribution: [docs/RESEARCH.md](docs/RESEARCH.md).
 Actual verification and its limits: [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
-## License
+## Why We Use the AGPL-3.0 License
 
-JEVRuntime is free software under the GNU Affero General Public License, version 3
-or any later version (`AGPL-3.0-or-later`). See [LICENSE](LICENSE). If you run a
-modified version for other people over a network, you must offer them its source code.
+At Floyd's Labs / Legacy AI, we built JEVRuntime as a supervised execution runtime for
+terminal agents: plain-language Constitutions, independent semantic judgment of every
+step, bubblewrap sandboxing and verifiable, reviewed results. It exists so independent
+builders don't have to invent safe agent execution gates from scratch before they can
+let an agent touch real work.
+
+We release JEVRuntime under the GNU Affero General Public License v3
+(`AGPL-3.0-or-later`) for three plain reasons:
+
+- **Open Exchange:** We believe in putting real foundational building blocks into the
+  hands of independent developers, self-hosters and hobbyists for unhindered personal
+  and local use.
+- **The Give-Back Rule:** If you take JEVRuntime, modify it and expose it to the public
+  over a network, such as a cloud app or hosted API service, the AGPL-3.0 requires you
+  to make your modified source code available under these same open rules.
+- **Passive Protection:** This license keeps our self-funded, independent lab work a
+  shared community asset. It stops proprietary platforms from repackaging our work into
+  closed-source commercial services without contributing back.
+
+If you are building tools for yourself, tinkering locally, or playing by the rules of
+open-source reciprocity, this is yours to use. See [`LICENSE`](LICENSE) for the full
+terms.
