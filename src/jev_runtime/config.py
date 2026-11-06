@@ -84,6 +84,30 @@ def judgment_settings(config):
     return settings
 
 
+BROKER_URL_ENV = "JEV_BROKER_URL"
+BROKER_TOKEN_ENV = "JEV_BROKER_TOKEN"
+
+
+def broker_route(settings, environ=None):
+    """Optional credential-broker route for the OpenRouter JEV connection.
+
+    JEV_BROKER_URL names a proxy that injects the provider credential itself, for
+    example https://broker.example/proxy/openrouter. JEV_BROKER_TOKEN is the
+    short-lived token that proxy expects. Neither is saved; both come from the
+    environment of this run. Returns None when no broker is configured.
+    """
+    environ = os.environ if environ is None else environ
+    url = environ.get(BROKER_URL_ENV, "").strip()
+    if not url:
+        return None
+    if settings.get("provider") != "openrouter":
+        raise ValueError(BROKER_URL_ENV + " is supported only for the openrouter JEV provider")
+    token = environ.get(BROKER_TOKEN_ENV, "").strip()
+    if not token:
+        raise ValueError("Set " + BROKER_TOKEN_ENV + " to use " + BROKER_URL_ENV)
+    return endpoint(url), token
+
+
 def generative_settings(config, role):
     if role == "onboarding":
         section = "onboarding"

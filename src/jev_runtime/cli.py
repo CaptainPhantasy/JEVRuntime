@@ -3,11 +3,20 @@ import getpass
 import json
 import os
 import shlex
+import shutil
 import sys
+import textwrap
 from contextlib import ExitStack
 from pathlib import Path
 
-from .config import ConnectionRequired, generative_settings, judgment_settings, load, setup
+from .config import (
+    ConnectionRequired,
+    broker_route,
+    generative_settings,
+    judgment_settings,
+    load,
+    setup,
+)
 from .contracts import Decision, digest
 from .destinations import (
     DestinationError,
@@ -33,6 +42,43 @@ from .store import Store
 from .supervisor import Supervisor
 
 _CREDENTIALS = {}
+
+
+def _width():
+    return max(40, min(shutil.get_terminal_size((100, 24)).columns, 100) - 1)
+
+
+def wrap_text(text, width=None):
+    """Wrap human text by line, keeping indentation; JSON and blank lines pass through."""
+    if text.lstrip().startswith(("{", "[")):
+        return text
+    width = width or _width()
+    lines = []
+    for line in text.split("\n"):
+        if len(line) <= width:
+            lines.append(line)
+            continue
+        indent = line[: len(line) - len(line.lstrip())]
+        bullet = "  " if line.lstrip().startswith(("• ", "- ")) else ""
+        lines.append(
+            textwrap.fill(
+                line.strip(),
+                width=width,
+                initial_indent=indent,
+                subsequent_indent=indent + bullet,
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+        )
+    return "\n".join(lines)
+
+
+def say(*parts, file=None):
+    stream = file or sys.stdout
+    text = " ".join(str(part) for part in parts)
+    if stream.isatty():
+        text = wrap_text(text)
+    print(text, file=stream)
 
 
 def _summary(payload):
@@ -63,11 +109,11 @@ def _summary(payload):
 
 def print_doctor(result):
     if result.get("available"):
-        print("Worker isolation: available (" + str(result.get("backend") or "unknown") + ")")
+        say("Worker isolation: available (" + str(result.get("backend") or "unknown") + ")")
     else:
-        print("Worker isolation: unavailable")
+        say("Worker isolation: unavailable")
         display("Reason: " + (result.get("reason") or "not reported"))
-        print("Workers cannot launch until isolation is available. Install bubblewrap (bwrap).")
+        say("Workers cannot launch until isolation is available. Install bubblewrap (bwrap).")
     for key, value in result.items():
         if key not in {"available", "backend", "reason"}:
             display("  " + key + ": " + str(value))
@@ -75,9 +121,9 @@ def print_doctor(result):
 
 def print_status(events):
     if not events:
-        print("No worker sessions recorded yet. Start one with /run in jev, or jev run -- COMMAND.")
+        say("No worker sessions recorded yet. Start one with /run in jev, or jev run -- COMMAND.")
         return
-    print(str(len(events)) + " recorded worker events (oldest first):")
+    say(str(len(events)) + " recorded worker events (oldest first):")
     for event in events:
         display(
             "  "
@@ -89,22 +135,22 @@ def print_status(events):
             + "  "
             + _summary(event.get("payload"))
         )
-    print("Full records: jev status --json")
+    say("Full records: jev status --json")
 
 
 def print_records(kind, records):
     if not records:
-        print("No " + kind + " records yet.")
+        say("No " + kind + " records yet.")
         return
-    print(str(len(records)) + " " + kind + " records:")
+    say(str(len(records)) + " " + kind + " records:")
     for identifier, payload in records:
         display("  " + identifier + "  " + _summary(payload))
-    print("Full records: jev inspect --kind " + kind + " --json")
+    say("Full records: jev inspect --kind " + kind + " --json")
 
 
 def display(text):
     # Provider output cannot hide or redraw the human approval prompt.
-    print("".join(char for char in text if char.isprintable() or char in "\n\t"))
+    say("".join(char for char in text if char.isprintable() or char in "\n\t"))
 
 
 def credential(settings, label, *, purpose, disallowed=()):
@@ -167,32 +213,42 @@ class ConnectedOnboarding:
         return model.turn(conversation, intent_id, workspace)
 
 
+JEV_UNAVAILABLE = (
+    "The JEV judgment could not run, so this proposal cannot be approved yet. "
+    "Nothing was authorized."
+)
+JEV_UNAVAILABLE_STEPS = (
+    "To fix it, do one of these:",
+    "  - Set OPENROUTER_API_KEY (or the key name chosen in jev setup) and start jev again.",
+    "  - Set JEV_BROKER_URL and JEV_BROKER_TOKEN to use a credential broker.",
+    "  - Run jev setup to choose a JEV provider.",
+    "  - Try jev --demo for an offline walkthrough with simulated judgments.",
+    "Then continue the interview so jev reviews the proposal again.",
+)
 JEV_ERROR_HINTS = {
-    "ValueError": "The JEV judgment could not run, usually because no JEV API key was "
-    "provided. Set the key named in jev setup (default OPENROUTER_API_KEY), then use /retry.",
-    "ConnectionRequired": "JEV is not connected. Run jev setup to choose its connection, "
-    "then use /retry.",
-    "TimeoutError": "The JEV service did not answer in time. Use /retry.",
+    "ConnectionRequired": "JEV is not connected yet.",
+    "TimeoutError": "The JEV service did not answer in time.",
+    "ConnectError": "The JEV service could not be reached.",
 }
 
 
 def review(runtime, proposal_id):
     proposal = runtime.store.get(proposal_id, "policy_proposal")
     policy = proposal["policy"]
-    print("\nProposed Constitution")
+    say("\nProposed Constitution")
     display("Project: " + policy["workspace"])
     display("Requested capabilities: " + (", ".join(policy["actions"]) or "none"))
     missing = {"read", "execute"} - set(policy["actions"])
     if missing:
-        print(
+        say(
             "Worker launch unavailable: this scope does not authorize "
             + " and ".join(sorted(missing))
             + "."
         )
-        print(
+        say(
             "Keep this restricted scope or clarify permissions in the interview; /run cannot launch it."
         )
-    print("Completion requires:")
+    say("Completion requires:")
     for requirement in policy["required_evidence"]:
         display("  • " + requirement)
     display(
@@ -208,11 +264,11 @@ def review(runtime, proposal_id):
         display("  Launch/check prefix without an extra operation approval: " + shlex.join(command))
     for check in policy.get("checks", []):
         if check["kind"] == "command":
-            print("    Required exit status: " + str(check["expected_exit"]))
+            say("    Required exit status: " + str(check["expected_exit"]))
         if check.get("contains"):
             display("    Must contain exactly this text: " + repr(check["contains"]))
-    print("Judgment floor: " + str(policy.get("judgment_threshold", 0.95)))
-    print(
+    say("Judgment floor: " + str(policy.get("judgment_threshold", 0.95)))
+    say(
         "Time limit: "
         + str(policy.get("max_seconds", 900))
         + " seconds; failure limit: "
@@ -221,48 +277,46 @@ def review(runtime, proposal_id):
         + str(policy.get("behavior_interval", 30))
         + " seconds"
     )
-    print(
+    say(
         "Child commands share the same isolated files/network permissions; launch prefixes do not filter every child command."
     )
-    print(
-        "Workers run in a private copy. Delete and host Git operations require separate approval."
-    )
-    print("JEV review: " + ("passed" if proposal["semantic_pass"] else "did not pass"))
+    say("Workers run in a private copy. Delete and host Git operations require separate approval.")
+    say("JEV review: " + ("passed" if proposal["semantic_pass"] else "did not pass"))
     if result := proposal.get("semantic_result"):
         display("JEV model: " + result["model"])
         if result.get("error"):
-            display("JEV unavailable: " + result["error"] + "; authority remains inactive.")
             hint = JEV_ERROR_HINTS.get(result["error"])
-            if hint:
-                print(hint)
+            say(JEV_UNAVAILABLE + (" " + hint if hint else ""))
+            for step in JEV_UNAVAILABLE_STEPS:
+                say(step)
         else:
             if result.get("dimensions"):
-                print("JEV dimension probabilities (every dimension must meet the floor):")
+                say("JEV dimension probabilities (every dimension must meet the floor):")
                 for dimension, probability in result["dimensions"].items():
                     display("  " + dimension + ": " + str(probability))
-                print("Lowest dimension: " + str(result["probability"]))
+                say("Lowest dimension: " + str(result["probability"]))
             else:
-                print("JEV probability: " + str(result["probability"]))
+                say("JEV probability: " + str(result["probability"]))
             if not proposal["semantic_pass"]:
-                print(
+                say(
                     "Below the required threshold. Clarify the scope or completion conditions before activation."
                 )
-    print("Proposal: " + proposal_id)
+    say("Proposal: " + proposal_id)
 
 
 def human_approval(runtime, proposal_id):
     review(runtime, proposal_id)
     if not runtime.store.get(proposal_id, "policy_proposal")["semantic_pass"]:
-        print("This proposal cannot activate. Continue the interview to revise it.")
+        say("This proposal cannot activate. Continue the interview to revise it.")
         return False
     if not sys.stdin.isatty():
         raise ValueError("Human approval requires an interactive terminal")
     answer = input("Authorize this exact proposed scope? Type yes or no: ").strip().lower()
     if answer != "yes":
-        print("No approval recorded. You can continue describing changes.")
+        say("No approval recorded. You can continue describing changes.")
         return False
     runtime.approve(proposal_id)
-    print("Your approval is recorded for this policy version.")
+    say("Your approval is recorded for this policy version.")
     return True
 
 
@@ -344,7 +398,10 @@ def interview_run_arguments(text, args):
 def start_worker(runtime, args, config, proposal, argv=None):
     policy, active = runtime._active(proposal)
     if not active:
-        raise ValueError("The selected Constitution is not active")
+        raise ValueError(
+            "This proposal is not approved yet, so no worker can start. Use /approve "
+            "(it needs a passing JEV judgment and your yes), or jev --demo to try it offline."
+        )
     validate_workspace_selection(args, policy.workspace)
     agent = (config or {}).get("agent", {})
     command = list(argv or agent.get("command", []))
@@ -372,21 +429,21 @@ def start_worker(runtime, args, config, proposal, argv=None):
         tool_roots=tuple(agent.get("tool_roots", [])),
     )
     changes = runner.preview(run_id)
-    print("\nWorker exited successfully. Proposed project changes:")
+    say("\nWorker exited successfully. Proposed project changes:")
     for change in changes:
         display("  " + change["action"] + " " + change["path"])
-    print("Nothing has been applied to the project yet. Session: " + run_id)
+    say("Nothing has been applied to the project yet. Session: " + run_id)
     if confirm_operation(
         "Run the acceptance checks and apply this reviewed result to the project?"
     ):
         applied = runner.publish(run_id)
-        print(
+        say(
             "Applied "
             + str(len(applied))
             + " reviewed file changes; recorded acceptance evidence for this result."
         )
     else:
-        print("Saved for review. Use " + command_prefix(args) + " apply " + run_id + " when ready.")
+        say("Saved for review. Use " + command_prefix(args) + " apply " + run_id + " when ready.")
     return run_id
 
 
@@ -407,25 +464,25 @@ def interview(store, runtime, model, args, config=None):
                 Path(workspace).mkdir(exist_ok=True, mode=0o700)
             session = OnboardingSession.start(store, runtime, model, workspace)
     validate_workspace_selection(args, session.settings["workspace"])
-    print("Session: " + session.id)
+    say("Session: " + session.id)
     display("Project: " + session.settings["workspace"])
-    print("Talk naturally. /review shows the proposal; /approve records your authorization.")
-    print(
+    say("Talk naturally. /review shows the proposal; /approve records your authorization.")
+    say(
         "/run starts your configured worker; /handoff exports a brief; /retry retries a failed reply; /done pauses."
     )
-    print("Launch options: /run [--no-provider] [--interactive] [--] COMMAND [ARG ...]")
+    say("Launch options: /run [--no-provider] [--interactive] [--] COMMAND [ARG ...]")
     transcript = session.transcript()
     if len(transcript) == 1:
         display(session.settings["opening"])
     elif session.pending():
-        print("Your last message is saved and awaiting a model response. Use /retry to continue.")
+        say("Your last message is saved and awaiting a model response. Use /retry to continue.")
     else:
         display(json.loads(transcript[-1]["content"])["question"])
     while True:
         try:
             text = input("You: ")
         except (EOFError, KeyboardInterrupt):
-            print(
+            say(
                 "\nConversation saved. Resume with "
                 + command_prefix(args)
                 + " onboard --session "
@@ -433,7 +490,7 @@ def interview(store, runtime, model, args, config=None):
             )
             return 0
         if text.strip() in {"/done", "/quit"}:
-            print(
+            say(
                 "Conversation saved. Resume with "
                 + command_prefix(args)
                 + " onboard --session "
@@ -454,7 +511,7 @@ def interview(store, runtime, model, args, config=None):
             continue
         if text.strip() in {"/review", "/approve", "/handoff"}:
             if proposal is None:
-                print("Continue the interview until there is a current proposal to review.")
+                say("Continue the interview until there is a current proposal to review.")
                 continue
             if text.strip() == "/review":
                 review(runtime, proposal)
@@ -471,14 +528,14 @@ def interview(store, runtime, model, args, config=None):
                     with output.open("x", encoding="utf-8") as stream:
                         output.chmod(0o600)
                         stream.write(content)
-                    print("Next-phase brief saved: " + str(output))
+                    say("Next-phase brief saved: " + str(output))
                 except FileExistsError:
-                    print("The next-phase brief for this policy is already saved: " + str(output))
+                    say("The next-phase brief for this policy is already saved: " + str(output))
                 except ValueError as exc:
                     display(str(exc))
             continue
         if text.startswith("/") and text.strip() != "/retry" and not text.startswith("/context "):
-            print("Available commands: /review, /approve, /run, /handoff, /retry, /context, /done")
+            say("Available commands: /review, /approve, /run, /handoff, /retry, /context, /done")
             continue
         try:
             if text.startswith("/context "):
@@ -488,18 +545,18 @@ def interview(store, runtime, model, args, config=None):
         except Exception as exc:
             if isinstance(exc, OnboardingContractError):
                 # The diagnostic is model-facing; the human gets a plain next step.
-                print(FRIENDLY_PARSE_FAILURE)
+                say(FRIENDLY_PARSE_FAILURE)
                 continue
             if isinstance(exc, (OnboardingServiceError, ConnectionRequired)):
                 display(str(exc))
             else:
-                print("The reply could not be completed (" + type(exc).__name__ + ").")
-            print("/retry retries a recorded unanswered message; /done pauses the conversation.")
+                say("The reply could not be completed (" + type(exc).__name__ + ").")
+            say("/retry retries a recorded unanswered message; /done pauses the conversation.")
             continue
         display(result["response"]["question"])
         if result["proposal_id"]:
             review(runtime, result["proposal_id"])
-            print(
+            say(
                 "Describe changes in your own words, or enter /approve when this matches your intent."
             )
 
@@ -625,14 +682,14 @@ def main(argv=None):
             from .capabilities import capability_report
 
             result = capability_report(probe=args.probe)
-            print(json.dumps(result, indent=2))
+            say(json.dumps(result, indent=2))
             return 1 if args.probe and not result["host_probe"]["available"] else 0
         if args.command == "doctor":
             from .sandbox import Sandbox
 
             result = Sandbox().check()
             if args.json:
-                print(json.dumps(result, indent=2))
+                say(json.dumps(result, indent=2))
             else:
                 print_doctor(result)
             return 0 if result["available"] else 1
@@ -654,7 +711,7 @@ def main(argv=None):
                         raise ValueError(
                             "Git abandonment requires an exact --attempt ID from git reconcile"
                         )
-                    print(
+                    say(
                         json.dumps(
                             [
                                 {
@@ -679,7 +736,7 @@ def main(argv=None):
                     if args.abandon
                     else git_report(runtime, args.attempt)
                 )
-                print(json.dumps(result, indent=2))
+                say(json.dumps(result, indent=2))
                 return 0
             if args.command == "reconcile":
                 from .reconciliation import publication_report
@@ -690,12 +747,12 @@ def main(argv=None):
                     if args.abandon
                     else publication_report(runtime, args.run_id)
                 )
-                print(json.dumps(result, indent=2))
+                say(json.dumps(result, indent=2))
                 return 0
             if args.command == "inspect":
                 records = store.records(args.kind)
                 if args.json:
-                    print(json.dumps(records, indent=2))
+                    say(json.dumps(records, indent=2))
                 else:
                     print_records(args.kind, records)
                 return 0
@@ -725,7 +782,7 @@ def main(argv=None):
                     )
                 )
                 if args.json:
-                    print(json.dumps(events, indent=2))
+                    say(json.dumps(events, indent=2))
                 else:
                     print_status(events)
                 return 0
@@ -734,27 +791,25 @@ def main(argv=None):
                 store.append(
                     "runtime_stop", {"run_id": args.run_id, "reason": "Human requested stop"}
                 )
-                print(
+                say(
                     "Stop requested. The supervisor will terminate this worker; its files remain staged."
                 )
                 return 0
             if args.command == "revoke":
                 host = Runtime(store, None)
                 host.suspend(host.constitution_id(args.proposal), "Human revoked authority")
-                print(
+                say(
                     "Constitution authority suspended. Running workers will stop and pending publication is blocked."
                 )
                 return 0
             if args.command == "constitution" and args.operation == "list":
                 from .constitutions import history
 
-                print(json.dumps(history(Runtime(store, None)), indent=2))
+                say(json.dumps(history(Runtime(store, None)), indent=2))
                 return 0
             config = None
             if args.demo:
-                print(
-                    "DEMONSTRATION: simulated model replies and judgments; separate demo records."
-                )
+                say("DEMONSTRATION: simulated model replies and judgments; separate demo records.")
                 judge, model = FakeJudge(), DemoOnboarding()
             else:
                 if (
@@ -782,15 +837,18 @@ def main(argv=None):
 
                 def connect_judge():
                     j = judgment_settings(get_config())
-                    client = stack.enter_context(
-                        judgment_client(
+                    route = broker_route(j)
+                    if route is not None:
+                        upstream, token = route
+                        client = judgment_client(j, token, upstream=upstream)
+                    else:
+                        client = judgment_client(
                             j,
                             credential(
                                 j, "JEV (" + j.get("provider", "typesafe") + ")", purpose="judgment"
                             ),
                         )
-                    )
-                    return TypeSafeJudge(client)
+                    return TypeSafeJudge(stack.enter_context(client))
 
                 judge = LazyJudge(connect_judge)
                 model = None
@@ -798,7 +856,7 @@ def main(argv=None):
                     config = get_config()
                     model = ConnectedOnboarding(config)
                     if config["onboarding"].get("provider") == "unconfigured":
-                        print(
+                        say(
                             "Onboarding is not connected. Your messages will be saved without model replies; use "
                             + command_prefix(args)
                             + " setup to select a connection."
@@ -820,7 +878,7 @@ def main(argv=None):
                     if args.command == "verify"
                     else runner.publish(args.run_id)
                 )
-                print(json.dumps(result, indent=2))
+                say(json.dumps(result, indent=2))
                 return 0
             if args.command == "recover":
                 supervisor(runtime, args).recover(args.proposal)
@@ -829,7 +887,7 @@ def main(argv=None):
                 from .constitutions import compose, export_policy, import_policy, rollback
 
                 if args.operation == "export" and len(args.values) == 2:
-                    print(export_policy(runtime, *args.values))
+                    say(export_policy(runtime, *args.values))
                     return 0
                 if args.operation == "import" and len(args.values) == 1:
                     proposal = import_policy(runtime, args.values[0])
@@ -864,7 +922,7 @@ def main(argv=None):
                 if args.operation == "status":
                     if "read" not in policy.actions:
                         raise ValueError("This Constitution does not grant repository reads")
-                    print(json.dumps(plan, indent=2))
+                    say(json.dumps(plan, indent=2))
                     return 0
                 member_directory(policy.workspace)
                 username = token = None
@@ -882,13 +940,13 @@ def main(argv=None):
                 result = execute_git(
                     runner, proposal, gateway, plan, username=username, token=token
                 )
-                print(json.dumps(result, indent=2))
+                say(json.dumps(result, indent=2))
                 return 0
             if args.command == "approve":
                 return 0 if human_approval(runtime, args.proposal) else 1
             if args.command == "decide":
                 decision = runtime.decide(args.proposal, args.action, args.target)
-                print(decision)
+                say(decision)
                 return (
                     0
                     if decision == Decision.ALLOW
@@ -897,10 +955,10 @@ def main(argv=None):
                     else 1
                 )
             elif args.command == "collect-file":
-                print(runtime.collect_file(args.proposal, args.requirement, args.target))
+                say(runtime.collect_file(args.proposal, args.requirement, args.target))
             elif args.command == "complete":
                 result = runtime.completion_status(args.proposal)
-                print(
+                say(
                     json.dumps(result, indent=2)
                     if args.details
                     else "passed"
@@ -910,14 +968,14 @@ def main(argv=None):
                 return 0 if result["passed"] else 1
         return 0
     except DestinationError as exc:
-        print(str(exc), file=sys.stderr)
+        say(str(exc), file=sys.stderr)
         return 2
     except (EOFError, KeyboardInterrupt):
-        print("\nStopped. Recorded conversation and approvals are preserved.")
+        say("\nStopped. Recorded conversation and approvals are preserved.")
         return 0
     except Exception as exc:
         detail = str(exc) if isinstance(exc, (ValueError, RuntimeError)) else type(exc).__name__
-        print(
+        say(
             "Operation stopped: " + detail,
             file=sys.stderr,
         )

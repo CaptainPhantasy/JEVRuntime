@@ -93,6 +93,9 @@ RUNTIME_INVARIANTS = {
 }
 
 
+OPENROUTER_URL = "https://openrouter.ai"
+
+
 class OpenRouterDecisionTransport(httpx2.BaseTransport):
     """Route the official SDK wire contract to OpenRouter's native Decisions API.
 
@@ -101,15 +104,16 @@ class OpenRouterDecisionTransport(httpx2.BaseTransport):
     follow redirects, or fall back to a generative model.
     """
 
-    def __init__(self, transport=None):
+    def __init__(self, transport=None, upstream=OPENROUTER_URL):
         self.transport = transport or httpx2.HTTPTransport(retries=0, trust_env=False)
+        self.decisions_url = upstream.rstrip("/") + "/api/alpha/decisions"
 
     def handle_request(self, request):
-        if request.method != "POST" or str(request.url) != "https://openrouter.ai/v1/systemone":
+        if request.method != "POST" or str(request.url) != OPENROUTER_URL + "/v1/systemone":
             raise ValueError("Unsupported OpenRouter judgment request")
         forwarded = httpx2.Request(
             "POST",
-            "https://openrouter.ai/api/alpha/decisions",
+            self.decisions_url,
             headers=request.headers,
             content=request.read(),
             extensions=request.extensions,
@@ -120,15 +124,21 @@ class OpenRouterDecisionTransport(httpx2.BaseTransport):
         self.transport.close()
 
 
-def judgment_client(settings, api_key, transport=None):
-    """Create the same official SDK client for either supported JEV provider."""
+def judgment_client(settings, api_key, transport=None, upstream=None):
+    """Create the same official SDK client for either supported JEV provider.
+
+    ``upstream`` optionally replaces https://openrouter.ai with a credential
+    broker proxy; the request shape and endpoint path stay fixed.
+    """
     provider = settings.get("provider", "typesafe")
     if provider == "openrouter":
-        if settings["base_url"].rstrip("/") != "https://openrouter.ai":
+        if settings["base_url"].rstrip("/") != OPENROUTER_URL:
             raise ValueError("OpenRouter JEV base_url must be https://openrouter.ai")
-        transport = OpenRouterDecisionTransport(transport)
+        transport = OpenRouterDecisionTransport(transport, upstream or OPENROUTER_URL)
     elif provider != "typesafe":
         raise ValueError("Unsupported judgment provider")
+    elif upstream:
+        raise ValueError("A broker upstream is supported only for the openrouter JEV provider")
     return TypeSafeClient(
         api_key=api_key,
         model=settings["model"],
